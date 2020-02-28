@@ -1,0 +1,382 @@
+註解:除了調參數的部分是用Python之外(下面有再次註解)，其他使用的皆是R。
+#載入所需套件
+library(data.table)
+library(Matrix)
+library(mlr)
+require(xgboost)
+require(caret)
+library(rpart)
+library(ROSE)
+library(unbalanced)
+library(mice)
+library(randomForest)
+#使用隨機數時，在執行或者除錯後，讓創造的隨機數保持不變
+set.seed(1234)
+#--------------------------------------------------------------------------------------------------------------
+#將train.csv及test.csV匯入R
+x = read.csv("train.csv",header = T,fileEncoding = "Big5") #匯入train資料
+y = read.csv("test.csv",header = T,fileEncoding = "Big5") #匯入test資料
+#--------------------------------------------------------------------------------------------------------------
+#找出資料中的缺失值
+y$Y1 <- NA #將test資料裡欲預測的變數改為缺失值型式
+data <- rbind(x,y) #將train資料與test資料合併
+data <- data[,2:132] #將data裡的流水號變數(ID)去除
+na <- sapply(data,function(x) sum(is.na(x))) #
+na1 <- sort(na, decreasing=T) #將變數裡有的NA個數進行排序列出
+na2 <- na1[na1>0] #找出有缺失值的變數
+na3 <- data.frame(na2) #以dataframe的型式顯示缺失值在每項變數的情況
+#--------------------------------------------------------------------------------------------------------------
+#填補缺失值
+data[["INSD_LAST_YEARDIF_CNT"]][is.na(data[["INSD_LAST_YEARDIF_CNT"]])] <- 0
+data[["L1YR_C_CNT"]][is.na(data[["L1YR_C_CNT"]])] <- 0
+data[["APC_1ST_YEARDIF"]][is.na(data[["APC_1ST_YEARDIF"]])] <- 0
+data[["TERMINATION_RATE"]][is.na(data[["TERMINATION_RATE"]])] <- 0
+data[["ANNUAL_PREMIUM_AMT"]][is.na(data[["ANNUAL_PREMIUM_AMT"]])] <- 0
+data[["ANNUAL_INCOME_AMT"]][is.na(data[["ANNUAL_INCOME_AMT"]])] <- median(data$ANNUAL_INCOME_AMT,na.rm = T)
+data[["C_IND"]] <- factor(data[["C_IND"]], levels= c(levels(data[["C_IND"]]),c('None')))
+data[["C_IND"]][is.na(data[["C_IND"]])] <- "None"
+data[["A_IND"]] <- factor(data[["A_IND"]], levels= c(levels(data[["A_IND"]]),c('None')))
+data[["A_IND"]][is.na(data[["A_IND"]])] <- "None"
+data[["B_IND"]] <- factor(data[["B_IND"]], levels= c(levels(data[["B_IND"]]),c('None')))
+data[["B_IND"]][is.na(data[["B_IND"]])] <- "None"
+FINANCETOOLS <- c("FINANCETOOLS_A","FINANCETOOLS_B","FINANCETOOLS_C","FINANCETOOLS_D","FINANCETOOLS_E","FINANCETOOLS_F","FINANCETOOLS_G")
+for (x in FINANCETOOLS){
+  data[[x]] <- factor(data[[x]], levels= c(levels(data[[x]]),c('None')))
+  data[[x]][is.na(data[[x]])] <- "None"
+}
+IF <- c("IF_ADD_INSD_F_IND","IF_ADD_INSD_L_IND","IF_ADD_INSD_Q_IND","IF_ADD_INSD_G_IND","IF_ADD_INSD_R_IND")
+for (x in IF){
+  data[[x]] <- factor(data[[x]], levels= c(levels(data[[x]]),c('None')))
+  data[[x]][is.na(data[[x]])] <- "None"
+}
+data[["LEVEL"]] <- factor(data[["LEVEL"]])
+A <- c("RFM_R","LEVEL")
+for (x in A){
+  data[[x]] <- factor(data[[x]], levels= c(levels(data[[x]]),c('None')))
+  data[[x]][is.na(data[[x]])] <- "None"
+}
+data[["RFM_M_LEVEL"]] <- factor(data[["RFM_M_LEVEL"]])
+B <- c("APC_1ST_AGE","REBUY_TIMES_CNT","RFM_M_LEVEL")
+for (x in B){
+  data[[x]] <- factor(data[[x]], levels= c(levels(data[[x]]),c('None')))
+  data[[x]][is.na(data[[x]])] <- "None"
+}
+C <- c("DIEBENEFIT_AMT","DIEACCIDENT_AMT","POLICY_VALUE_AMT","ANNUITY_AMT","EXPIRATION_AMT","ACCIDENT_HOSPITAL_REC_AMT","DISEASES_HOSPITAL_REC_AMT","OUTPATIENT_SURGERY_AMT","INPATIENT_SURGERY_AMT","PAY_LIMIT_MED_MISC_AMT","FIRST_CANCER_AMT","ILL_ACCELERATION_AMT","ILL_ADDITIONAL_AMT","LONG_TERM_CARE_AMT","MONTHLY_CARE_AMT")
+for(x in C){
+  data[[x]][is.na(data[[x]])] <- 0
+}
+D <- c("IF_ISSUE_INSD_A_IND","IF_ISSUE_INSD_B_IND","IF_ISSUE_INSD_C_IND","IF_ISSUE_INSD_D_IND","IF_ISSUE_INSD_E_IND","IF_ISSUE_INSD_F_IND","IF_ISSUE_INSD_G_IND","IF_ISSUE_INSD_H_IND","IF_ISSUE_INSD_I_IND","IF_ISSUE_INSD_J_IND","IF_ISSUE_INSD_K_IND","IF_ISSUE_INSD_L_IND","IF_ISSUE_INSD_M_IND","IF_ISSUE_INSD_N_IND","IF_ISSUE_INSD_O_IND","IF_ISSUE_INSD_P_IND","IF_ISSUE_INSD_Q_IND")
+for (x in D){
+  data[[x]] <- factor(data[[x]], levels= c(levels(data[[x]]),c('None')))
+  data[[x]][is.na(data[[x]])] <- "None"
+}
+E <- c("INSD_1ST_AGE","IF_ADD_INSD_IND")
+for (x in E){
+  data[[x]] <- factor(data[[x]], levels= c(levels(data[[x]]),c('None')))
+  data[[x]][is.na(data[[x]])] <- "None"
+}
+G <- c("X_A_IND","X_B_IND","X_C_IND","X_D_IND","X_E_IND","X_F_IND","X_G_IND","X_H_IND")
+for (x in G){
+  data[[x]] <- factor(data[[x]], levels= c(levels(data[[x]]),c('None')))
+  data[[x]][is.na(data[[x]])] <- "None"
+}
+data[["OCCUPATION_CLASS_CD"]][is.na(data[["OCCUPATION_CLASS_CD"]])] <- 1
+data[["OCCUPATION_CLASS_CD"]] <- factor(data[["OCCUPATION_CLASS_CD"]])
+data[["EDUCATION_CD"]][is.na(data[["EDUCATION_CD"]])] <- 3
+data[["EDUCATION_CD"]] <- factor(data[["EDUCATION_CD"]])
+data[["BMI"]][is.na(data[["BMI"]])] <- median(data$BMI,na.rm = T)
+#剩餘尚有缺失值的變數，使用mice套件進行填補
+mice.data <- mice(data1,
+                  m = 1,           # 產生三個被填補好的資料表
+                  maxit = 20,     # max iteration(迭代次數)
+                  method = "cart", #使用CART決策樹
+                  seed = 1234)      # set.seed()，令抽樣每次都一樣
+complete(mice.data)
+data2 <- complete(mice.data)
+Y1 <- data[,131]
+data3 <- cbind(data1,Y1)
+#--------------------------------------------------------------------------------------------------------------
+#運用function函數將類別型變數的內容改為數字型態，使能進行後續分析
+aslevel <- function(x,levels) {as.factor(levels[x])}
+data3$Y1 <- aslevel(data3$Y1,levels=c("N"=0,"Y"=1))
+data3$GENDER <- aslevel(data3$GENDER,levels=c("F"=0,"M"=1))
+data3$AGE <- aslevel(data3$AGE,levels=c("低"=0,"中"=1,"中高"=2,"高"=3))
+data3$CHARGE_CITY_CD <- aslevel(data3$CHARGE_CITY_CD,levels=c("A1"=0,"A2"=1,"B1"=2,"B2"=3,"C1"=4,"C2"=5,"D"=6,"E"=7))
+data3$CONTACT_CITY_CD <- aslevel(data3$CONTACT_CITY_CD,levels=c("A1"=0,"A2"=1,"B1"=2,"B2"=3,"C1"=4,"C2"=5,"D"=6,"E"=7))
+data3$LAST_A_CCONTACT_DT <- aslevel(data3$LAST_A_CCONTACT_DT,levels=c("N"=0,"Y"=1))
+data3$LAST_A_ISSUE_DT <- aslevel(data3$LAST_A_ISSUE_DT,levels=c("N"=0,"Y"=1))
+data3$LAST_B_ISSUE_DT <- aslevel(data3$LAST_B_ISSUE_DT,levels=c("N"=0,"Y"=1))
+data3$APC_1ST_AGE <- aslevel(data3$APC_1ST_AGE,levels=c("None"=0,"低"=1,"中"=2,"中高"=3,"高"=4))
+data3$INSD_1ST_AGE <- aslevel(data3$INSD_1ST_AGE,levels=c("None"=0,"低"=1,"中"=2,"中高"=3,"高"=4))
+data3$IF_2ND_GEN_IND <- aslevel(data3$IF_2ND_GEN_IND,levels=c("N"=0,"Y"=1))
+data3$RFM_R <- aslevel(data3$RFM_R,levels=c("None"=0,"低"=1,"中"=2,"中高"=3,"高"=4))
+data3$REBUY_TIMES_CNT <- aslevel(data3$REBUY_TIMES_CNT,levels=c("None"=0,"低"=1,"中"=2,"中高"=3,"高"=4))
+data3$LEVEL <- aslevel(data3$LEVEL,levels=c(levels(data3[["LEVEL"]]),c("None"=0)))
+data3$RFM_M_LEVEL <- aslevel(data3$RFM_M_LEVEL,levels=c(levels(data3[["RFM_M_LEVEL"]]),c("None"=0)))
+data3$LIFE_CNT <- aslevel(data3$LIFE_CNT,levels=c("低"=0,"中"=1,"高"=2))
+data3$IF_ISSUE_A_IND <- aslevel(data3$IF_ISSUE_A_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_B_IND <- aslevel(data3$IF_ISSUE_B_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_C_IND <- aslevel(data3$IF_ISSUE_C_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_D_IND <- aslevel(data3$IF_ISSUE_D_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_E_IND <- aslevel(data3$IF_ISSUE_E_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_F_IND <- aslevel(data3$IF_ISSUE_F_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_G_IND <- aslevel(data3$IF_ISSUE_G_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_H_IND <- aslevel(data3$IF_ISSUE_H_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_I_IND <- aslevel(data3$IF_ISSUE_I_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_J_IND <- aslevel(data3$IF_ISSUE_J_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_K_IND <- aslevel(data3$IF_ISSUE_K_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_L_IND <- aslevel(data3$IF_ISSUE_L_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_M_IND <- aslevel(data3$IF_ISSUE_M_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_N_IND <- aslevel(data3$IF_ISSUE_N_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_O_IND <- aslevel(data3$IF_ISSUE_O_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_P_IND <- aslevel(data3$IF_ISSUE_P_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_Q_IND <- aslevel(data3$IF_ISSUE_Q_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ADD_F_IND <- aslevel(data3$IF_ADD_F_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ADD_L_IND <- aslevel(data3$IF_ADD_L_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ADD_Q_IND <- aslevel(data3$IF_ADD_Q_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ADD_G_IND <- aslevel(data3$IF_ADD_G_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ADD_R_IND <- aslevel(data3$IF_ADD_R_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ADD_IND <- aslevel(data3$IF_ADD_IND,levels=c("N"=0,"Y"=1))
+data3$L1YR_PAYMENT_REMINDER_IND <- aslevel(data3$L1YR_PAYMENT_REMINDER_IND,levels=c("N"=0,"Y"=1))
+data3$L1YR_LAPSE_IND <- aslevel(data3$L1YR_LAPSE_IND,levels=c("N"=0,"Y"=1))
+data3$LAST_B_CONTACT_DT <- aslevel(data3$LAST_B_CONTACT_DT,levels=c("N"=0,"Y"=1))
+data3$A_IND <- aslevel(data3$A_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$B_IND <- aslevel(data3$B_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$C_IND <- aslevel(data3$C_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$LAST_C_DT <- aslevel(data3$LAST_C_DT,levels=c("N"=0,"Y"=1))
+data3$IF_S_REAL_IND <- aslevel(data3$IF_S_REAL_IND,levels=c("N"=0,"Y"=1))
+data3$IF_Y_REAL_IND <- aslevel(data3$IF_Y_REAL_IND,levels=c("N"=0,"Y"=1))
+data3$IM_IS_A_IND <- aslevel(data3$IM_IS_A_IND,levels=c("N"=0,"Y"=1))
+data3$IM_IS_B_IND <- aslevel(data3$IM_IS_B_IND,levels=c("N"=0,"Y"=1))
+data3$IM_IS_C_IND <- aslevel(data3$IM_IS_C_IND,levels=c("N"=0,"Y"=1))
+data3$IM_IS_D_IND <- aslevel(data3$IM_IS_D_IND,levels=c("N"=0,"Y"=1))
+data3$X_A_IND <- aslevel(data3$X_A_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$X_B_IND <- aslevel(data3$X_B_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$X_C_IND <- aslevel(data3$X_C_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$X_D_IND <- aslevel(data3$X_D_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$X_E_IND <- aslevel(data3$X_E_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$X_F_IND <- aslevel(data3$X_F_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$X_G_IND <- aslevel(data3$X_G_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$X_H_IND <- aslevel(data3$X_H_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_HOUSEHOLD_CLAIM_IND <- aslevel(data3$IF_HOUSEHOLD_CLAIM_IND,levels=c("N"=0,"Y"=1))
+data3$IF_ISSUE_INSD_A_IND <- aslevel(data3$IF_ISSUE_INSD_A_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_B_IND <- aslevel(data3$IF_ISSUE_INSD_B_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_C_IND <- aslevel(data3$IF_ISSUE_INSD_C_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_D_IND <- aslevel(data3$IF_ISSUE_INSD_D_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_E_IND <- aslevel(data3$IF_ISSUE_INSD_E_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_F_IND <- aslevel(data3$IF_ISSUE_INSD_F_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_G_IND <- aslevel(data3$IF_ISSUE_INSD_G_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_H_IND <- aslevel(data3$IF_ISSUE_INSD_H_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_I_IND <- aslevel(data3$IF_ISSUE_INSD_I_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_J_IND <- aslevel(data3$IF_ISSUE_INSD_J_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_K_IND <- aslevel(data3$IF_ISSUE_INSD_K_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_L_IND <- aslevel(data3$IF_ISSUE_INSD_L_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_M_IND <- aslevel(data3$IF_ISSUE_INSD_M_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_N_IND <- aslevel(data3$IF_ISSUE_INSD_N_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_O_IND <- aslevel(data3$IF_ISSUE_INSD_O_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_P_IND <- aslevel(data3$IF_ISSUE_INSD_P_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ISSUE_INSD_Q_IND <- aslevel(data3$IF_ISSUE_INSD_Q_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ADD_INSD_F_IND <- aslevel(data3$IF_ADD_INSD_F_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ADD_INSD_L_IND <- aslevel(data3$IF_ADD_INSD_L_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ADD_INSD_Q_IND <- aslevel(data3$IF_ADD_INSD_Q_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ADD_INSD_G_IND <- aslevel(data3$IF_ADD_INSD_G_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ADD_INSD_R_IND <- aslevel(data3$IF_ADD_INSD_R_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$IF_ADD_INSD_IND <- aslevel(data3$IF_ADD_INSD_IND,levels=c("None"=0,"N"=1,"Y"=2))
+data3$CUST_9_SEGMENTS_CD <- aslevel(data3$CUST_9_SEGMENTS_CD,levels=c("A"=0,"B"=1,"C"=2,"D"=3,"E"=4,"F"=5,"G"=6,"H"=7))
+data3$FINANCETOOLS_A <- aslevel(data3$FINANCETOOLS_A,levels=c("None"=0,"N"=1,"Y"=2))
+data3$FINANCETOOLS_B <- aslevel(data3$FINANCETOOLS_B,levels=c("None"=0,"N"=1,"Y"=2))
+data3$FINANCETOOLS_C <- aslevel(data3$FINANCETOOLS_C,levels=c("None"=0,"N"=1,"Y"=2))
+data3$FINANCETOOLS_D <- aslevel(data3$FINANCETOOLS_D,levels=c("None"=0,"N"=1,"Y"=2))
+data3$FINANCETOOLS_E <- aslevel(data3$FINANCETOOLS_E,levels=c("None"=0,"N"=1,"Y"=2))
+data3$FINANCETOOLS_F <- aslevel(data3$FINANCETOOLS_F,levels=c("None"=0,"N"=1,"Y"=2))
+data3$FINANCETOOLS_G <- aslevel(data3$FINANCETOOLS_G,levels=c("None"=0,"N"=1,"Y"=2))
+levels(data3$LEVEL)[6] <- 0
+levels(data3$RFM_M_LEVEL)[7] <- 0
+data3[["INSD_LAST_YEARDIF_CNT"]][is.na(data3[["INSD_LAST_YEARDIF_CNT"]])] <- 0
+data <- data3 #將進行完變換的新資料重新寫入data變數
+#--------------------------------------------------------------------------------------------------------------
+#進行PCA
+#此處PCA的進行僅針對數值型變數，因此在這裡先找出數值型變數
+num <- c(8,10,12,13,14,15,16,20,49,50,51,52,53,61,62,63,64,67,72,81,82,83,84,85,86,87,88,
+         89,90,91,92,93,94,95,96,98,122) 
+data_pca = data[,num]
+#做歸一化(排除已進行神秘轉換及歸一化的變數)
+num1 = c(1:7,10:12,14,18:20)
+data1 = data_pca[,num1]
+data2 = data_pca[,-num1]
+data1 = scale(data1,center = TRUE,scale = TRUE)
+data1 = as.data.frame(data1)
+data_neW = cbind(data1,data2)
+#進行PCA
+pca <- prcomp(formula = ~ .,  
+              data = data_neW,
+              center = FALSE,     
+              scale = FALSE) 
+# 使用plot()函式
+plot(pca,         #放入pca
+     type="line", #用直線連結每個點
+     main="Plot for Numeric") #主標題
+# 用藍線標示出特徵值為1的地方
+abline(h=1, col="blue") # Kaiser eigenvalue-greater-than-one rule
+vars <- (pca$sdev)^2  # 從pca中取出標準差(pca$sdev)後再平方，計算variance(特徵值)
+# 計算每個主成分的解釋比例 = 各個主成分的特徵值/總特徵值
+props <- vars / sum(vars)
+cumulative.props <- cumsum(props)  # 累加前n個元素的值
+cumulative.props
+# 累積解釋比例圖
+plot(cumulative.props)
+# 特徵向量(原變數的線性組合)
+top15_pca.data <- pca$x[, 1:15]
+top15_pca.data 
+class(top15_pca.data)
+# pca$rotation 
+top15_pca.rotation = pca$rotation[,1:15]
+top15_pca.rotation
+class(top15_pca.rotation)
+top15_pca.rotation = as.data.frame(top15_pca.rotation)
+top15_pca.rotation1 = abs(top15_pca.rotation)
+#--------------------------------------------------------------------------------------------------------------
+# 用PCA後的資料進入模型
+#進行undersampling
+#將資料分出train資料及test資料
+train_pca <- data_neW[1:100000,]
+test_pca <- data_new[100001:250000,]
+#從train資料裡取出Y1的「Y」及「N」的資料筆數為1:1的資料(各有2000筆)
+trainY_pca <- train_pca[train$Y1 == "Y",]
+trainX_pca <- train_pca[train$Y1 == "N",]
+m_pca <- trainX_pca[sample(nrow(trainX), 2000, replace = FALSE),] #將隨機取出的2000筆Y1為「Y」的資料進行亂數排列
+n_pca <- trainY_pca[sample(nrow(trainY), 2000, replace = FALSE),] #將隨機取出的2000筆Y1為「N」的資料進行亂數排列
+train_pca <- rbind(m_pca,n_pca) #將亂數排序完的兩資料進行合併
+#將資料轉換為進模型所需的型態
+train2_pca = data.table(train_pca ,keep.rownames = F)
+train_sm_pca <- sparse.model.matrix(Y1~.-1, data = train2_pca)
+train_ov_pca = train2_pca[,"Y1"] == "Y"
+test2_pca = data.table(test_pca ,keep.rownames = F)
+test2_pca = test2_pca[,-131]  # 刪除欄位Y1
+test_sm_pca <- sparse.model.matrix(~.-1, data = test2_pca)
+#將資料使用xgboost模型進行配適
+bst_pca = xgboost(data = train_sm_pca,label = train_ov_pca,max_depth = 18, eta = 0.04567486016118333, nthread = 2, nrounds = 200 , 
+              eval_metric = "auc" , colsample_bytree = 0.5703148857513719, 
+              gamma = 0.16365455495795223, 
+              subsample = 0.7989452467573158,
+              min_child_weight = 38,
+              max_delta_step = 10,
+              eval_metric = "logloss", 
+              objective = "binary:logistic") 
+test_pred = predict(bst_pca, test_sm_pca)
+#將最後結果寫為csv檔匯出
+write.csv(test_pred, file = "C:/Users/user/Desktop/Ypred.csv",row.names=FALSE)
+#--------------------------------------------------------------------------------------------------------------
+#選出數值型變數的欄位
+num <- c(8,10,12,13,14,15,16,20,49,50,51,52,53,61,62,63,64,67,72,81,82,83,84,85,86,87,88,
+         89,90,91,92,93,94,95,96,98,122) 
+data_sc1 = data[,num]
+data_sc2 = data[,-num]
+#做歸一化(排除已進行神秘轉換及歸一化的變數)
+num_1 = c(1:7,10:12,14,18:20)
+data_1 = data_scl[,num_1]
+data_2 = data_scl[,-num_1]
+data_1 = scale(data_1,center = TRUE,scale = TRUE)
+data_1 = as.data.frame(data_1)
+data_neW = cbind(data_1,data_2)
+data = cbind(data_new, data_sc2)
+#--------------------------------------------------------------------------------------------------------------
+#進行undersampling
+#將資料分出原始的train資料及test資料
+train <- data[1:100000,]
+test <- data[100001:250000,]
+#從train資料裡取出Y1的「Y」及「N」的資料筆數為1:1的資料(各有2000筆)
+trainY <- train[train$Y1 == "Y",]
+trainX <- train[train$Y1 == "N",]
+m <- trainX[sample(nrow(trainX), 2000, replace = FALSE),] #將取出的2000筆Y1為「Y」的資料進行亂數排列
+n <- trainY[sample(nrow(trainY), 2000, replace = FALSE),] #將取出的2000筆Y1為「N」的資料進行亂數排列
+train <- rbind(m,n) #將亂數排序完的兩資料進行合併
+#---------------------------------------------------------------------------------------------------------------
+#將資料轉換為進模型所需的型態
+train2 = data.table(train ,keep.rownames = F)
+train_sm <- sparse.model.matrix(Y1~.-1, data = train2)
+train_ov = train2[,"Y1"] == "Y"
+test2 = data.table(test ,keep.rownames = F)
+test2 = test2[,-131]  # 刪除欄位Y1
+test_sm <- sparse.model.matrix(~.-1, data = test2)
+#將資料使用xgboost模型進行配適
+bst = xgboost(data = train_sm,label = train_ov,max_depth = 18, eta = 0.04567486016118333, nthread = 2, nrounds = 200 , 
+              eval_metric = "auc" , colsample_bytree = 0.5703148857513719, 
+              gamma = 0.16365455495795223, 
+              subsample = 0.7989452467573158,
+              min_child_weight = 38,
+              max_delta_step = 10,
+              eval_metric = "logloss", 
+              objective = "binary:logistic") 
+test_pred = predict(bst, test_sm)
+#將最後結果寫為csv檔匯出
+write.csv(test_pred, file = "C:/Users/user/Desktop/Ypred.csv",row.names=FALSE)
+#---------------------------------------------------------------------------------------------
+註解:以下調參數的部分是用Python
+
+#匯入所需套件
+import pandas as pd
+import numpy as np
+import random
+import xgboost as xgb
+from xgboost import XGBClassifier
+#---------------------------------------------------------------------------------------------
+# 匯入資料
+#將在R裡進行過undersampling的「Y」及「N」的1:1資料(one.csv)匯入python，以尋找最佳參數
+data = pd.read_csv("one.csv")
+#---------------------------------------------------------------------------------------------
+# 資料的轉換與選取
+#進行資料的轉換及選取，使資料成為可以尋找最佳參數的型式
+#將「N」及「Y」利用map函數轉變為「0」與「1」
+mapping = {
+           'N': 0,
+           'Y': 1,
+           }
+data["Y1"] = data["Y1"].map(mapping)
+#進行資料選取
+a = data.iloc[:,0:129] #除了Y1以外的其他欄位
+b = data.iloc[:, [130]] #僅有Y1變數欄位
+#---------------------------------------------------------------------------------------------
+# 尋找最佳參數
+best_param = list()
+best_seednumber = 123
+best_logloss = np.Inf
+best_logloss_index = 0
+
+dtrain = xgb.DMatrix(a, b, feature_names = list(a))
+
+for iter in range(1000):
+    param = {
+           'objective' : "binary:logistic",            
+           'max_depth' : np.random.randint(6,30),         
+           'eta' : np.random.uniform(.01, .3),            
+           'gamma' : np.random.uniform(0.0, 0.2),         
+           'subsample' : np.random.uniform(.6, 1),             
+           'colsample_bytree' : np.random.uniform(.5, .8), 
+           'min_child_weight' : np.random.randint(1,41),
+           'max_delta_step' : np.random.randint(1,11)}
+
+    cv_nround = 100                                  
+    cv_nfold = 5                                     
+    seed_number = np.random.randint(0,100)
+    random.seed(seed_number)
+
+    mdcv = xgb.cv(params = param, dtrain=dtrain,metrics=["auc","rmse","error","logloss"],
+                   nfold=cv_nfold, num_boost_round=cv_nround, verbose_eval = None,
+                   early_stopping_rounds=8, maximize=False)
+
+    min_logloss = min(mdcv['test-logloss-mean'])
+    min_logloss_index = mdcv.index[mdcv["test-logloss-mean"] == min(mdcv["test-logloss-mean"])][0]
+
+    if min_logloss < best_logloss:
+        best_logloss = min_logloss
+        best_logloss_index = min_logloss_index
+        best_seednumber = seed_number
+        best_param = param
+
+
+random.seed(best_seednumber)
+nround = best_logloss_index
+print('best_round = %d, best_seednumber = %d' %(nround,best_seednumber))
+print('best_param : ------------------------------')
+print(best_param)
